@@ -1,0 +1,6 @@
+# Code owners for primus-mllog
+# These owners are automatically requested for review on matching changes.
+# Later matches take precedence over earlier ones.
+
+# Default owner for everything in the repo
+*   @radwivedula
