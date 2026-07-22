@@ -16,8 +16,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/AMD-AGI/primus-mllog"
-Repository = "https://github.com/AMD-AGI/primus-mllog"
+Homepage = "https://github.com/AMD-AGI/mlperf-common"
+Repository = "https://github.com/AMD-AGI/mlperf-common"
 
 [tool.setuptools]
 packages = ["primus_mllog"]

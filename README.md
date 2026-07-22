@@ -51,7 +51,7 @@ Install directly from GitHub (recommended for Dockerfiles — pin to a commit fo
 reproducible builds):
 
 ```bash
-pip install git+https://github.com/AMD-AGI/primus-mllog.git@7f0de9b01a0c4153a8bc7a8edb292b3748195e32
+pip install git+https://github.com/AMD-AGI/mlperf-common.git@7f0de9b01a0c4153a8bc7a8edb292b3748195e32
 ```
 
 In a Dockerfile:
@@ -60,14 +60,14 @@ In a Dockerfile:
 # git must be available in the image
 RUN apt-get update && apt-get install -y --no-install-recommends git
 
-RUN pip install git+https://github.com/AMD-AGI/primus-mllog.git@7f0de9b01a0c4153a8bc7a8edb292b3748195e32
+RUN pip install git+https://github.com/AMD-AGI/mlperf-common.git@7f0de9b01a0c4153a8bc7a8edb292b3748195e32
 ```
 
 For local development:
 
 ```bash
-git clone https://github.com/AMD-AGI/primus-mllog.git
-cd primus-mllog
+git clone https://github.com/AMD-AGI/mlperf-common.git
+cd mlperf-common
 pip install -e .
 ```
 
