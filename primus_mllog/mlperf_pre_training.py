@@ -182,11 +182,13 @@ class MLPerfMegatronPretrainTrainer(MegatronPretrainTrainer):
 
         from .warmup import run_synthetic_warmup
         self._warmup_active = True
-        run_synthetic_warmup(
-            self, forward_step_func, model, optimizer, opt_param_scheduler,
-            config, megatron_args,
-        )
-        self._warmup_active = False
+        try:
+            run_synthetic_warmup(
+                self, forward_step_func, model, optimizer, opt_param_scheduler,
+                config, megatron_args,
+            )
+        finally:
+            self._warmup_active = False
 
         self.throughput_timer.get_throughput()
 

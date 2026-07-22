@@ -36,7 +36,7 @@ After warmup:
   * LR scheduler state is rolled back and re-synced (param_groups['lr']).
   * FP8 scaling state (amax_history, scale, scale_inv, fp8_initialized) is
     fully reset and seeded with safe defaults.
-  * If WARMUP_RECIPE selected an FP4 recipe, FP4 state is also reset.
+  * FP4 quantizer state is reset too (no-op unless the model has FP4 modules).
 
 Controlled by:
 
@@ -601,6 +601,10 @@ def run_synthetic_warmup(
     identical to the pre-FP4 committed version.  Set
     ``WARMUP_RECIPE=fp4_mxfp4`` or ``fp4_nvfp4`` to opt into FP4 warmup.
 
+    Both FP8 and FP4 state are reset after warmup (each a no-op on other
+    precisions), and the mutate/warmup/restore sequence is wrapped in
+    ``try/finally`` so a failing ``train_step`` still reverts caller state.
+
     Uses the Primus trainer's ``train_step`` (not upstream Megatron's) so
     that tuple-valued loss dicts are reduced correctly.
     """
@@ -657,75 +661,73 @@ def run_synthetic_warmup(
     recipe, recipe_kind = _build_warmup_recipe()
     warmup_ctx_factory = _warmup_autocast(recipe)
 
-    # ---- warmup steps ----------------------------------------------------
-    for step in range(1, warmup_steps + 1):
-        step_t0 = time.time()
-        with warmup_ctx_factory():
-            trainer.train_step(
-                forward_step_func, synth_iter, model,
-                optimizer, opt_param_scheduler, config,
-            )
-        torch.cuda.synchronize()
-        if empty_cache_each_step:
-            torch.cuda.empty_cache()
-        _log(f"Step {step}/{warmup_steps} done in {time.time() - step_t0:.1f}s")
-
-    # ---- restore state ---------------------------------------------------
-    _log("Restoring optimizer")
-    _restore_optimizer(optimizer, saved_opt)
-
-    _log("Restoring LR scheduler")
-    _restore_scheduler_state(opt_param_scheduler, saved_sched)
-
-    _log("Restoring model parameters")
-    n_restored = _restore_model_params(models, saved_params)
-    del saved_params
-    _log(f"Restored {n_restored} parameter tensors")
-
-    if hasattr(optimizer, "reload_model_params"):
-        optimizer.reload_model_params()
-        _log("Called optimizer.reload_model_params()")
-
-    # ---- zero Adam state buffers (defensive) ----------------------------
-    # With betas=[1,1] during warmup, exp_avg / exp_avg_sq should already be
-    # zero, but zero them explicitly in case any param group lacked betas.
-    # Iterate over chained sub-optimizers for ChainedOptimizer support.
-    zeroed_state_tensors = 0
-    for inner_opt in _get_inner_optimizers(optimizer):
-        for param_states in inner_opt.state.values():
-            for k, v in param_states.items():
-                if isinstance(v, torch.Tensor) and v.is_floating_point():
-                    v.zero_()
-                    zeroed_state_tensors += 1
-    _log(f"Zeroed {zeroed_state_tensors} optimizer state tensors (exp_avg / exp_avg_sq)")
-
-    for m in models:
-        m.zero_grad(set_to_none=True)
-    _log("Zeroed all model gradients")
-
-    # ---- reset FP8 (always; no-op for BF16 / non-FP8 modules) -----------
-    _log("Resetting FP8 state")
     total_reset = 0
-    for m in models:
-        total_reset += reset_fp8_state(m, reset_meta_tensors=True)
-    seed_fp8_amax(models, seed_value=1.0)
-
-    # ---- reset FP4 (only when warmup explicitly used an FP4 recipe) -----
     total_fp4_reset = 0
-    if recipe_kind == "fp4":
+
+    try:
+        # ---- warmup steps ------------------------------------------------
+        for step in range(1, warmup_steps + 1):
+            step_t0 = time.time()
+            with warmup_ctx_factory():
+                trainer.train_step(
+                    forward_step_func, synth_iter, model,
+                    optimizer, opt_param_scheduler, config,
+                )
+            torch.cuda.synchronize()
+            if empty_cache_each_step:
+                torch.cuda.empty_cache()
+            _log(f"Step {step}/{warmup_steps} done in {time.time() - step_t0:.1f}s")
+    finally:
+        # ---- restore state -----------------------------------------------
+        _log("Restoring optimizer")
+        _restore_optimizer(optimizer, saved_opt)
+
+        _log("Restoring LR scheduler")
+        _restore_scheduler_state(opt_param_scheduler, saved_sched)
+
+        _log("Restoring model parameters")
+        n_restored = _restore_model_params(models, saved_params)
+        del saved_params
+        _log(f"Restored {n_restored} parameter tensors")
+
+        if hasattr(optimizer, "reload_model_params"):
+            optimizer.reload_model_params()
+            _log("Called optimizer.reload_model_params()")
+
+        # ---- zero Adam state buffers -------------------------------------
+        zeroed_state_tensors = 0
+        for inner_opt in _get_inner_optimizers(optimizer):
+            for param_states in inner_opt.state.values():
+                for k, v in param_states.items():
+                    if isinstance(v, torch.Tensor) and v.is_floating_point():
+                        v.zero_()
+                        zeroed_state_tensors += 1
+        _log(f"Zeroed {zeroed_state_tensors} optimizer state tensors (exp_avg / exp_avg_sq)")
+
+        for m in models:
+            m.zero_grad(set_to_none=True)
+        _log("Zeroed all model gradients")
+
+        # ---- reset FP8 ---------------------------------------------------
+        _log("Resetting FP8 state")
+        for m in models:
+            total_reset += reset_fp8_state(m, reset_meta_tensors=True)
+        seed_fp8_amax(models, seed_value=1.0)
+
+        # ---- reset FP4 ---------------------------------------------------
         _log("Resetting FP4 state (no seeding)")
         for m in models:
             total_fp4_reset += reset_fp4_state(m, reset_meta_tensors=True)
 
-    # ---- release cached allocator blocks --------------------------------
-    torch.cuda.synchronize()
-    torch.cuda.empty_cache()
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
+        # ---- release cached allocator blocks ----------------------------
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
 
-    # ---- restore Megatron config ----------------------------------------
-    for key, val in saved_config.items():
-        setattr(config, key, val)
+        # ---- restore Megatron config ------------------------------------
+        for key, val in saved_config.items():
+            setattr(config, key, val)
 
     nan_params = sum(
         1 for m in models for _, p in m.named_parameters()
