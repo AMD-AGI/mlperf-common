@@ -531,11 +531,14 @@ def _restore_optimizer(optimizer, all_saved):
 # ---------------------------------------------------------------------------
 
 def _save_model_params(models):
-    """Snapshot all model parameters to CPU to avoid doubling GPU memory."""
+    """Snapshot all model parameters and buffers to CPU to avoid doubling GPU memory."""
     saved = {}
     for m in models:
         for name, p in m.named_parameters():
-            saved[(id(m), name)] = p.data.to("cpu", copy=True)
+            saved[(id(m), "param", name)] = p.data.to("cpu", copy=True)
+        for name, b in m.named_buffers():
+            if b is not None:
+                saved[(id(m), "buffer", name)] = b.data.to("cpu", copy=True)
     return saved
 
 
@@ -543,9 +546,14 @@ def _restore_model_params(models, saved):
     restored = 0
     for m in models:
         for name, p in m.named_parameters():
-            key = (id(m), name)
+            key = (id(m), "param", name)
             if key in saved:
                 p.data.copy_(saved[key].to(p.device))
+                restored += 1
+        for name, b in m.named_buffers():
+            key = (id(m), "buffer", name)
+            if key in saved:
+                b.data.copy_(saved[key].to(b.device))
                 restored += 1
     return restored
 
@@ -699,10 +707,12 @@ def run_synthetic_warmup(
         for inner_opt in _get_inner_optimizers(optimizer):
             for param_states in inner_opt.state.values():
                 for k, v in param_states.items():
-                    if isinstance(v, torch.Tensor) and v.is_floating_point():
+                    if isinstance(v, torch.Tensor):
                         v.zero_()
                         zeroed_state_tensors += 1
-        _log(f"Zeroed {zeroed_state_tensors} optimizer state tensors (exp_avg / exp_avg_sq)")
+                    elif isinstance(v, (int, float)):
+                        param_states[k] = 0
+        _log(f"Zeroed {zeroed_state_tensors} optimizer state tensors (exp_avg / exp_avg_sq / step)")
 
         for m in models:
             m.zero_grad(set_to_none=True)
