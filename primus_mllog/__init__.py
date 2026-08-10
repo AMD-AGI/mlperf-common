@@ -7,7 +7,7 @@
 """Primus MLPerf Logging Package."""
 
 from .mlperf_logger import MLPerfLogger, ThroughputTimer
-from .mlperf_pre_training import MLPerfMegatronPretrainTrainer
+from .mlperf_pretrain_trainer import MLPerfMegatronPretrainTrainer
 from .mlperf_sft import MLPerfSFTLogger
 from .warmup import run_synthetic_warmup, reset_fp8_state, seed_fp8_amax
 
