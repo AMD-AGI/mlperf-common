@@ -152,7 +152,7 @@ class MLPerfMegatronPretrainTrainer(MegatronPretrainTrainer):
             from megatron.training import get_args
             from mlperf_logging.mllog import constants
 
-            from primus.backends.megatron.mlperf.warmup import run_synthetic_warmup
+            from .warmup import run_synthetic_warmup
 
             megatron_args = get_args()
 
