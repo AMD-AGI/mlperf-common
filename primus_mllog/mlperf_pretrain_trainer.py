@@ -31,7 +31,7 @@ import time
 from typing import Any
 
 from primus.backends.megatron.megatron_pretrain_trainer import MegatronPretrainTrainer
-from primus.backends.megatron.mlperf.mlperf_logger import MLPerfLogger, ThroughputTimer
+from .mlperf_logger import MLPerfLogger, ThroughputTimer
 
 try:
     from rpdTracerControl import rpdTracerControl
