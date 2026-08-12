@@ -36,7 +36,7 @@ After warmup:
   * LR scheduler state is rolled back and re-synced (param_groups['lr']).
   * FP8 scaling state (amax_history, scale, scale_inv, fp8_initialized) is
     fully reset and seeded with safe defaults.
-  * FP4 quantizer state is reset too (no-op unless the model has FP4 modules).
+  * If WARMUP_RECIPE selected an FP4 recipe, FP4 state is also reset.
 
 Controlled by:
 
@@ -62,10 +62,10 @@ from contextlib import nullcontext
 import torch
 import torch.distributed
 
-
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
+
 
 def _log(msg):
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
@@ -76,6 +76,7 @@ def _log(msg):
 # ---------------------------------------------------------------------------
 # Synthetic data
 # ---------------------------------------------------------------------------
+
 
 class SyntheticGPTDataIterator:
     """Infinite iterator yielding random token batches for Primus/Megatron GPT.
@@ -117,6 +118,7 @@ class SyntheticGPTDataIterator:
 # instead).  No behavioural change for FP8 / BF16 / current-scaling models.
 # ---------------------------------------------------------------------------
 
+
 def _is_delayed_scaling_recipe(module):
     """Return True if the module uses delayed scaling (which has scale/amax_history).
 
@@ -133,6 +135,7 @@ def _is_delayed_scaling_recipe(module):
         return False
 
     from transformer_engine.common.recipe import DelayedScaling
+
     fp8_meta = getattr(module, "fp8_meta", None)
     if fp8_meta is None:
         return True
@@ -194,8 +197,7 @@ def reset_fp8_state(model, reset_meta_tensors=True):
     models = model if isinstance(model, (list, tuple)) else [model]
     for m in models:
         m.apply(_reset)
-    _log(f"reset_fp8_state: {count} modules, "
-         f"{method_count} via method, {manual_count} via manual reset")
+    _log(f"reset_fp8_state: {count} modules, " f"{method_count} via method, {manual_count} via manual reset")
     return count
 
 
@@ -351,14 +353,14 @@ def reset_fp4_state(model, reset_meta_tensors=True):
     models = model if isinstance(model, (list, tuple)) else [model]
     for m in models:
         m.apply(_reset)
-    _log(f"reset_fp4_state: {count} modules, "
-         f"{method_count} via method, {manual_count} via manual reset")
+    _log(f"reset_fp4_state: {count} modules, " f"{method_count} via method, {manual_count} via manual reset")
     return count
 
 
 # ===========================================================================
 # Warmup recipe selection  --  NEW, opt-in via WARMUP_RECIPE
 # ===========================================================================
+
 
 def _resolve_recipe_str():
     """Return the warmup recipe string, honouring legacy WARMUP_FP8_RECIPE.
@@ -403,14 +405,19 @@ def _build_warmup_recipe():
             _log(f"Unknown FP8 WARMUP_RECIPE={recipe_str!r}; no autocast")
             return None, None
         history_len = int(os.getenv("WARMUP_FP8_HISTORY_LEN", "4"))
-        _log(f"Warmup will wrap train_step in fp8_autocast"
-             f"(format={recipe_str[4:]}, amax_history_len={history_len}, algo=most_recent)")
-        return DelayedScaling(
-            margin=0,
-            fp8_format=fmt,
-            amax_history_len=history_len,
-            amax_compute_algo="most_recent",
-        ), "fp8"
+        _log(
+            f"Warmup will wrap train_step in fp8_autocast"
+            f"(format={recipe_str[4:]}, amax_history_len={history_len}, algo=most_recent)"
+        )
+        return (
+            DelayedScaling(
+                margin=0,
+                fp8_format=fmt,
+                amax_history_len=history_len,
+                amax_compute_algo="most_recent",
+            ),
+            "fp8",
+        )
 
     # ---- FP4 family ------------------------------------------------------
     if recipe_str.startswith("fp4_"):
@@ -423,7 +430,10 @@ def _build_warmup_recipe():
         # Try to nudge Primus's MXFP4 recipe-state patch into place if the
         # model was built without FP4 (so the patch never ran).  No-op otherwise.
         try:
-            from primus.backends.megatron.core.fp4_utils import _ensure_mxfp4_recipe_support
+            from primus.backends.megatron.core.fp4_utils import (
+                _ensure_mxfp4_recipe_support,
+            )
+
             _ensure_mxfp4_recipe_support()
         except Exception:
             pass
@@ -468,6 +478,7 @@ def _warmup_autocast(recipe):
 # Optimizer save / restore  --  ORIGINAL from committed warmup.py
 # (preserves ChainedOptimizer support for EP < num_gpus configs)
 # ---------------------------------------------------------------------------
+
 
 def _get_inner_optimizers(optimizer):
     """Return a list of leaf-level torch optimizers from any Megatron wrapper.
@@ -530,15 +541,13 @@ def _restore_optimizer(optimizer, all_saved):
 # Model parameter snapshot  --  ORIGINAL from committed warmup.py, unchanged
 # ---------------------------------------------------------------------------
 
+
 def _save_model_params(models):
-    """Snapshot all model parameters and buffers to CPU to avoid doubling GPU memory."""
+    """Snapshot all model parameters to CPU to avoid doubling GPU memory."""
     saved = {}
     for m in models:
         for name, p in m.named_parameters():
-            saved[(id(m), "param", name)] = p.data.to("cpu", copy=True)
-        for name, b in m.named_buffers():
-            if b is not None:
-                saved[(id(m), "buffer", name)] = b.data.to("cpu", copy=True)
+            saved[(id(m), name)] = p.data.to("cpu", copy=True)
     return saved
 
 
@@ -546,14 +555,9 @@ def _restore_model_params(models, saved):
     restored = 0
     for m in models:
         for name, p in m.named_parameters():
-            key = (id(m), "param", name)
+            key = (id(m), name)
             if key in saved:
                 p.data.copy_(saved[key].to(p.device))
-                restored += 1
-        for name, b in m.named_buffers():
-            key = (id(m), "buffer", name)
-            if key in saved:
-                b.data.copy_(saved[key].to(b.device))
                 restored += 1
     return restored
 
@@ -589,8 +593,9 @@ def _restore_scheduler_state(scheduler, state):
 # Main entry point
 # ---------------------------------------------------------------------------
 
+
 def run_synthetic_warmup(
-    trainer,
+    train_step_func,
     forward_step_func,
     model,
     optimizer,
@@ -600,21 +605,23 @@ def run_synthetic_warmup(
 ):
     """Run *warmup_steps* forward+backward passes with synthetic data.
 
-    Called from ``MLPerfMegatronPretrainTrainer.train()`` **before**
-    ``RUN_START`` is logged, so warmup time is excluded from the timed run.
-    All side-effects (model params, optimizer, LR scheduler, FP8/FP4 state)
-    are reverted after warmup.
+    Called from ``MLPerfMegatronPretrainTrainer``'s patched ``train()``
+    **before** ``RUN_START`` is logged, so warmup time is excluded from the
+    timed run.  All side-effects (model params, optimizer, LR scheduler,
+    FP8/FP4 state) are reverted after warmup.
 
     Default behaviour (``WARMUP_RECIPE`` unset): no autocast wrapping,
     identical to the pre-FP4 committed version.  Set
     ``WARMUP_RECIPE=fp4_mxfp4`` or ``fp4_nvfp4`` to opt into FP4 warmup.
 
-    Both FP8 and FP4 state are reset after warmup (each a no-op on other
-    precisions), and the mutate/warmup/restore sequence is wrapped in
-    ``try/finally`` so a failing ``train_step`` still reverts caller state.
-
-    Uses the Primus trainer's ``train_step`` (not upstream Megatron's) so
-    that tuple-valued loss dicts are reduced correctly.
+    Args:
+        train_step_func: The (already MLPerf-patched) upstream
+            ``megatron.training.training.train_step`` function.  It is called
+            with the new-style signature
+            ``(forward_step_func, data_iterator, model, optimizer,
+            opt_param_scheduler, config, forward_backward_func, iteration=0)``.
+            ``forward_backward_func`` is resolved here via
+            ``get_forward_backward_func()`` (mirrors ``training.train()``).
     """
     warmup_steps = int(os.getenv("SYNTH_WARMUP_STEPS", "3"))
     if warmup_steps <= 0:
@@ -624,20 +631,32 @@ def run_synthetic_warmup(
     empty_cache_each_step = os.getenv("SYNTH_WARMUP_EMPTY_CACHE", "1") not in ("0", "false", "False")
 
     t0 = time.time()
-    _log(f"Starting {warmup_steps}-step synthetic warmup "
-         f"(seq_len={megatron_args.seq_length}, "
-         f"mbs={megatron_args.micro_batch_size}, "
-         f"empty_cache_each_step={empty_cache_each_step})")
+    _log(
+        f"Starting {warmup_steps}-step synthetic warmup "
+        f"(seq_len={megatron_args.seq_length}, "
+        f"mbs={megatron_args.micro_batch_size}, "
+        f"empty_cache_each_step={empty_cache_each_step})"
+    )
 
     vocab_size = getattr(
-        megatron_args, "padded_vocab_size",
+        megatron_args,
+        "padded_vocab_size",
         getattr(megatron_args, "vocab_size", 32000),
     )
     synth_iter = SyntheticGPTDataIterator(
-        megatron_args.seq_length, megatron_args.micro_batch_size, vocab_size,
+        megatron_args.seq_length,
+        megatron_args.micro_batch_size,
+        vocab_size,
     )
 
     models = model if isinstance(model, (list, tuple)) else [model]
+
+    # Resolve the forward-backward func the same way upstream
+    # ``megatron.training.training.train()`` does (see training.py).  Newer
+    # Megatron ``train_step`` takes this as an explicit positional argument.
+    from megatron.core.pipeline_parallel import get_forward_backward_func
+
+    forward_backward_func = get_forward_backward_func()
 
     # Temporarily set config fields needed by forward_backward_func.
     # Megatron's train() normally sets these, but warmup runs before it.
@@ -645,6 +664,7 @@ def run_synthetic_warmup(
     from megatron.core.distributed.distributed_data_parallel import (
         DistributedDataParallel as DDP,
     )
+
     saved_config = {}
     for key in ("finalize_model_grads_func", "grad_scale_func", "no_sync_func"):
         saved_config[key] = getattr(config, key, None)
@@ -654,10 +674,7 @@ def run_synthetic_warmup(
         config.grad_scale_func = optimizer.scale_loss
     if megatron_args.overlap_grad_reduce and config.no_sync_func is None:
         if isinstance(models[0], DDP):
-            config.no_sync_func = (
-                models[0].no_sync if len(models) == 1
-                else [m.no_sync for m in models]
-            )
+            config.no_sync_func = models[0].no_sync if len(models) == 1 else [m.no_sync for m in models]
 
     # ---- save state ------------------------------------------------------
     _log(f"Saving {sum(p.numel() for m in models for p in m.parameters())} parameters")
@@ -669,81 +686,91 @@ def run_synthetic_warmup(
     recipe, recipe_kind = _build_warmup_recipe()
     warmup_ctx_factory = _warmup_autocast(recipe)
 
+    # ---- warmup steps ----------------------------------------------------
+    for step in range(1, warmup_steps + 1):
+        step_t0 = time.time()
+        with warmup_ctx_factory():
+            train_step_func(
+                forward_step_func,
+                synth_iter,
+                model,
+                optimizer,
+                opt_param_scheduler,
+                config,
+                forward_backward_func,
+                iteration=0,
+            )
+        torch.cuda.synchronize()
+        if empty_cache_each_step:
+            torch.cuda.empty_cache()
+        _log(f"Step {step}/{warmup_steps} done in {time.time() - step_t0:.1f}s")
+
+    # ---- restore state ---------------------------------------------------
+    _log("Restoring optimizer")
+    _restore_optimizer(optimizer, saved_opt)
+
+    _log("Restoring LR scheduler")
+    _restore_scheduler_state(opt_param_scheduler, saved_sched)
+
+    _log("Restoring model parameters")
+    n_restored = _restore_model_params(models, saved_params)
+    del saved_params
+    _log(f"Restored {n_restored} parameter tensors")
+
+    if hasattr(optimizer, "reload_model_params"):
+        optimizer.reload_model_params()
+        _log("Called optimizer.reload_model_params()")
+
+    # ---- zero Adam state buffers (defensive) ----------------------------
+    # With betas=[1,1] during warmup, exp_avg / exp_avg_sq should already be
+    # zero, but zero them explicitly in case any param group lacked betas.
+    # Iterate over chained sub-optimizers for ChainedOptimizer support.
+    zeroed_state_tensors = 0
+    for inner_opt in _get_inner_optimizers(optimizer):
+        for param_states in inner_opt.state.values():
+            for k, v in param_states.items():
+                if isinstance(v, torch.Tensor) and v.is_floating_point():
+                    v.zero_()
+                    zeroed_state_tensors += 1
+    _log(f"Zeroed {zeroed_state_tensors} optimizer state tensors (exp_avg / exp_avg_sq)")
+
+    for m in models:
+        m.zero_grad(set_to_none=True)
+    _log("Zeroed all model gradients")
+
+    # ---- reset FP8 (always; no-op for BF16 / non-FP8 modules) -----------
+    _log("Resetting FP8 state")
     total_reset = 0
+    for m in models:
+        total_reset += reset_fp8_state(m, reset_meta_tensors=True)
+    seed_fp8_amax(models, seed_value=1.0)
+
+    # ---- reset FP4 (only when warmup explicitly used an FP4 recipe) -----
     total_fp4_reset = 0
-
-    try:
-        # ---- warmup steps ------------------------------------------------
-        for step in range(1, warmup_steps + 1):
-            step_t0 = time.time()
-            with warmup_ctx_factory():
-                trainer.train_step(
-                    forward_step_func, synth_iter, model,
-                    optimizer, opt_param_scheduler, config,
-                )
-            torch.cuda.synchronize()
-            if empty_cache_each_step:
-                torch.cuda.empty_cache()
-            _log(f"Step {step}/{warmup_steps} done in {time.time() - step_t0:.1f}s")
-    finally:
-        # ---- restore state -----------------------------------------------
-        _log("Restoring optimizer")
-        _restore_optimizer(optimizer, saved_opt)
-
-        _log("Restoring LR scheduler")
-        _restore_scheduler_state(opt_param_scheduler, saved_sched)
-
-        _log("Restoring model parameters")
-        n_restored = _restore_model_params(models, saved_params)
-        del saved_params
-        _log(f"Restored {n_restored} parameter tensors")
-
-        if hasattr(optimizer, "reload_model_params"):
-            optimizer.reload_model_params()
-            _log("Called optimizer.reload_model_params()")
-
-        # ---- zero Adam state buffers -------------------------------------
-        zeroed_state_tensors = 0
-        for inner_opt in _get_inner_optimizers(optimizer):
-            for param_states in inner_opt.state.values():
-                for k, v in param_states.items():
-                    if isinstance(v, torch.Tensor):
-                        v.zero_()
-                        zeroed_state_tensors += 1
-                    elif isinstance(v, (int, float)):
-                        param_states[k] = 0
-        _log(f"Zeroed {zeroed_state_tensors} optimizer state tensors (exp_avg / exp_avg_sq / step)")
-
-        for m in models:
-            m.zero_grad(set_to_none=True)
-        _log("Zeroed all model gradients")
-
-        # ---- reset FP8 ---------------------------------------------------
-        _log("Resetting FP8 state")
-        for m in models:
-            total_reset += reset_fp8_state(m, reset_meta_tensors=True)
-        seed_fp8_amax(models, seed_value=1.0)
-
-        # ---- reset FP4 ---------------------------------------------------
+    if recipe_kind == "fp4":
         _log("Resetting FP4 state (no seeding)")
         for m in models:
             total_fp4_reset += reset_fp4_state(m, reset_meta_tensors=True)
 
-        # ---- release cached allocator blocks ----------------------------
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
+    # ---- release cached allocator blocks --------------------------------
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
 
-        # ---- restore Megatron config ------------------------------------
-        for key, val in saved_config.items():
-            setattr(config, key, val)
+    # ---- restore Megatron config ----------------------------------------
+    for key, val in saved_config.items():
+        setattr(config, key, val)
 
     nan_params = sum(
-        1 for m in models for _, p in m.named_parameters()
+        1
+        for m in models
+        for _, p in m.named_parameters()
         if p.data.is_floating_point() and torch.isnan(p.data).any()
     )
     elapsed = time.time() - t0
-    _log(f"Warmup complete in {elapsed:.1f}s "
-         f"(fp8_reset={total_reset}, fp4_reset={total_fp4_reset}, "
-         f"recipe={recipe_kind or 'native'}, nan_params={nan_params})")
+    _log(
+        f"Warmup complete in {elapsed:.1f}s "
+        f"(fp8_reset={total_reset}, fp4_reset={total_fp4_reset}, "
+        f"recipe={recipe_kind or 'native'}, nan_params={nan_params})"
+    )
