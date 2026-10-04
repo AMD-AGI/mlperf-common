@@ -151,7 +151,12 @@ without code changes.
 | `MLLOG_CONTEXT_PARALLELISM` | `1` | Context-parallel size. |
 | `MLLOG_EXPERT_PARALLELISM` | `1` | Expert-parallel size. |
 | `MLLOG_MICRO_BATCH_SIZE` | `1` | Micro-batch size (metadata). |
-| `MLLOG_LOWEST_NUMERICAL_PRECISION_LINEAR` | `""` | Lowest linear-layer precision. |
+| `MLLOG_LOWEST_NUMERICAL_PRECISION_IN_LINEAR` | `""` | Lowest linear-layer precision. |
+| `MLLOG_LOWEST_NUMERICAL_PRECISION_IN_ATTN` | `""` | Lowest attention precision. |
+| `MLLOG_LOWEST_NUMERICAL_PRECISION_IN_COMM` | `""` | Lowest communication precision. |
+
+`MLLOG_LOWEST_NUMERICAL_PRECISION_LINEAR` remains supported as a deprecated
+alias for `MLLOG_LOWEST_NUMERICAL_PRECISION_IN_LINEAR`.
 
 ### Training / logging behavior
 
