@@ -165,7 +165,9 @@ class MLPerfSFTLogger:
             "expert_parallelism": constants.EXPERT_PARALLELISM,
             "micro_batch_size": constants.MICRO_BATCH_SIZE,
             "config_filename": constants.CONFIG_FILENAME,
-            "lowest_numerical_precision_linear": "lowest_numerical_precision_linear",
+            "lowest_numerical_precision_in_linear": "lowest_numerical_precision_in_linear",
+            "lowest_numerical_precision_in_attn": "lowest_numerical_precision_in_attn",
+            "lowest_numerical_precision_in_comm": "lowest_numerical_precision_in_comm",
         }
         for cfg_key, mllog_key in _KEY_MAP.items():
             if cfg_key in config and config[cfg_key] is not None and config[cfg_key] != "":
@@ -367,6 +369,9 @@ class MLPerfSFTLogger:
         context_parallel_size: int = 1,
         config_filename: str = "",
         lowest_numerical_precision_linear: str = "",
+        lowest_numerical_precision_in_linear: str = "",
+        lowest_numerical_precision_in_attn: str = "",
+        lowest_numerical_precision_in_comm: str = "",
     ) -> Dict[str, Any]:
         """Build the config dict expected by :meth:`log_init_params`.
 
@@ -429,5 +434,9 @@ class MLPerfSFTLogger:
             "expert_parallelism": 1,
             "micro_batch_size": train_mbs,
             "config_filename": config_filename,
-            "lowest_numerical_precision_linear": lowest_numerical_precision_linear,
+            "lowest_numerical_precision_in_linear": (
+                lowest_numerical_precision_in_linear or lowest_numerical_precision_linear
+            ),
+            "lowest_numerical_precision_in_attn": lowest_numerical_precision_in_attn,
+            "lowest_numerical_precision_in_comm": lowest_numerical_precision_in_comm,
         }

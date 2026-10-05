@@ -59,6 +59,15 @@ class MLPerfLogger:
         """Extract MLPERF config parameters from Megatron args."""
         from mlperf_logging.mllog import constants
 
+        # MLPerf Training 6.1 requires all three precision disclosures. Keep
+        # the pre-6.1 linear environment variable as a compatibility alias so
+        # existing benchmark configs emit the corrected key after upgrading
+        # primus-mllog.
+        lowest_precision_linear = os.getenv(
+            "MLLOG_LOWEST_NUMERICAL_PRECISION_IN_LINEAR",
+            os.getenv("MLLOG_LOWEST_NUMERICAL_PRECISION_LINEAR", ""),
+        )
+
         data_parallel_size = getattr(args, "data_parallel_size", 1)
         if data_parallel_size == 0:
             data_parallel_size = 1
@@ -107,7 +116,13 @@ class MLPerfLogger:
             constants.EXPERT_PARALLELISM: int(os.getenv("MLLOG_EXPERT_PARALLELISM", 1)),
             constants.MICRO_BATCH_SIZE: int(os.getenv("MLLOG_MICRO_BATCH_SIZE", 1)),
             constants.CONFIG_FILENAME: os.getenv("MLLOG_CONFIG_FILENAME", ""),
-            "lowest_numerical_precision_linear": os.getenv("MLLOG_LOWEST_NUMERICAL_PRECISION_LINEAR", ""),
+            "lowest_numerical_precision_in_linear": lowest_precision_linear,
+            "lowest_numerical_precision_in_attn": os.getenv(
+                "MLLOG_LOWEST_NUMERICAL_PRECISION_IN_ATTN", ""
+            ),
+            "lowest_numerical_precision_in_comm": os.getenv(
+                "MLLOG_LOWEST_NUMERICAL_PRECISION_IN_COMM", ""
+            ),
         }
         return configs
 
