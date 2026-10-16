@@ -137,7 +137,7 @@ without code changes.
 | `MLLOG_SAVE_TO_FILE` | `1` | Write to file (`0`/`false`/`no` → stdout only). |
 | `MLLOG_SUBMISSION_BENCHMARK` | `""` | Benchmark name (e.g. `llama2_70b_lora`). |
 | `MLLOG_SUBMISSION_DIVISION` | `""` | `closed` / `open`. |
-| `MLLOG_SUBMISSION_STATUS` | `""` | e.g. `onprem`, `cloud`. |
+| `MLLOG_SUBMISSION_STATUS` | `onprem` | e.g. `onprem`, `cloud`. |
 | `MLLOG_SUBMISSION_ORG` | `""` | Submitting organization. |
 | `MLLOG_SUBMISSION_PLATFORM` | `""` | Platform (e.g. `MI355X`). |
 | `MLLOG_CONFIG_FILENAME` | `""` | Config file name recorded in the log. |

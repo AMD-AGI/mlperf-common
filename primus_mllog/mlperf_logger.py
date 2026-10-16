@@ -107,7 +107,7 @@ class MLPerfLogger:
             "max_steps": args.train_iters,
             constants.SUBMISSION_BENCHMARK: os.getenv("MLLOG_SUBMISSION_BENCHMARK", ""),
             constants.SUBMISSION_DIVISION: os.getenv("MLLOG_SUBMISSION_DIVISION", ""),
-            constants.SUBMISSION_STATUS: os.getenv("MLLOG_SUBMISSION_STATUS", ""),
+            constants.SUBMISSION_STATUS: os.getenv("MLLOG_SUBMISSION_STATUS", "onprem"),
             constants.SUBMISSION_ORG: os.getenv("MLLOG_SUBMISSION_ORG", ""),
             constants.SUBMISSION_PLATFORM: os.getenv("MLLOG_SUBMISSION_PLATFORM", ""),
             constants.TENSOR_PARALLELISM: int(os.getenv("MLLOG_TENSOR_PARALLELISM", 1)),
