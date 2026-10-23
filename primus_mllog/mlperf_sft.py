@@ -22,6 +22,19 @@ import numpy as np
 from .mlperf_logger import MLPerfLogger
 
 
+def _npy_rows(path: str) -> int:
+    """Row count of a .npy file, read from its header without loading the array."""
+    with open(path, "rb") as f:
+        version = np.lib.format.read_magic(f)
+        read_header = (
+            np.lib.format.read_array_header_1_0
+            if version == (1, 0)
+            else np.lib.format.read_array_header_2_0
+        )
+        shape, _, _ = read_header(f)
+    return int(shape[0])
+
+
 class MLPerfSFTLogger:
     """Standalone MLPerf logger for SFT / fine-tuning workloads.
 
@@ -372,11 +385,15 @@ class MLPerfSFTLogger:
         lowest_numerical_precision_in_linear: str = "",
         lowest_numerical_precision_in_attn: str = "",
         lowest_numerical_precision_in_comm: str = "",
+        train_samples: Optional[int] = None,
+        eval_samples: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Build the config dict expected by :meth:`log_init_params`.
 
-        Reads ``train.npy`` / ``validation.npy`` from *data_root* for
-        sample counts.  All other values are passed explicitly so the
+        *train_samples* / *eval_samples* default to the row counts in the
+        ``train.npy`` / ``validation.npy`` headers under *data_root*; the
+        arrays themselves are not loaded, so the dataset is not read before
+        ``run_start``.  All other values are passed explicitly so the
         caller is not tied to any specific config object format.
 
         *data_parallel_size*, when provided, is used directly to compute
@@ -385,12 +402,10 @@ class MLPerfSFTLogger:
         ``parallel_state``; this only works after ``torch.distributed``
         has been initialised.
         """
-        train_samples = int(
-            np.load(os.path.join(data_root, "train.npy"), allow_pickle=True).shape[0]
-        )
-        eval_samples = int(
-            np.load(os.path.join(data_root, "validation.npy"), allow_pickle=True).shape[0]
-        )
+        if train_samples is None:
+            train_samples = _npy_rows(os.path.join(data_root, "train.npy"))
+        if eval_samples is None:
+            eval_samples = _npy_rows(os.path.join(data_root, "validation.npy"))
 
         if data_parallel_size is not None and data_parallel_size > 0:
             dp_size = data_parallel_size
