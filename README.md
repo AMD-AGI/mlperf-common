@@ -92,20 +92,72 @@ Primus stage dispatch or activate MLPerf logging for ordinary `pretrain`.
 
 ### Pretraining (Primus Megatron)
 
-Swap your trainer for the MLPerf-enabled subclass. All MLPerf events are handled
-automatically:
+`MLPerfMegatronPretrainTrainer` subclasses Primus's `MegatronPretrainTrainer`.
+Primus constructs it with the normal trainer context and drives its lifecycle
+(`setup -> init -> train -> cleanup`). Its `setup()` emits the initialization
+markers; its `train()` wraps upstream Megatron's training/evaluation functions
+and restores those functions when training exits.
+
+The public import after this rename is:
 
 ```python
 from mlperf_common import MLPerfMegatronPretrainTrainer
-
-trainer = MLPerfMegatronPretrainTrainer(...)  # same args as MegatronPretrainTrainer
-trainer.init()
-trainer.run()
 ```
 
-This emits `CACHE_CLEAR`, `INIT_START` / `INIT_STOP`, `RUN_START`, `EPOCH_START`,
-`BLOCK_START` / `BLOCK_STOP`, `EVAL_START` / `EVAL_STOP`, `EVAL_ACCURACY`,
-`train_loss`, and a convergence-aware `RUN_STOP`.
+This import alone does not activate MLPerf logging. Primus must select this
+trainer. It provides synthetic warmup before `RUN_START`, rank-aware logging,
+evaluation events, and convergence-aware `RUN_STOP`. Warmup is controlled by
+`SYNTH_WARMUP_STEPS`; see the configuration tables below for all settings.
+
+#### GPT-OSS reference: existing integration
+
+The following references are pinned to Primus commit
+`d8202b102de22a9f60d266c8193ef13b1ecba9c3`, **before its consumer imports are
+updated for this package rename**:
+
+- [GPT-OSS launch guide](https://github.com/AMD-AGI/Primus/blob/d8202b102de22a9f60d266c8193ef13b1ecba9c3/examples/mlperf/gpt_oss_20b/README.md)
+- [GPT-OSS MXFP4 recipe](https://github.com/AMD-AGI/Primus/blob/d8202b102de22a9f60d266c8193ef13b1ecba9c3/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-MXFP4-deosc-mlperf-pretrain.yaml#L15)
+- [Megatron trainer selection](https://github.com/AMD-AGI/Primus/blob/d8202b102de22a9f60d266c8193ef13b1ecba9c3/primus/backends/megatron/megatron_adapter.py#L44)
+
+The existing flow is:
+
+1. The GPT-OSS recipe sets `stage: ${PRIMUS_STAGE:mlperf_pretrain}` in its
+   trainer overrides, defaulting to `mlperf_pretrain`.
+2. The Megatron adapter selects `MLPerfMegatronPretrainTrainer` for that stage.
+   At the pinned revision it imports the class from `primus_mllog`.
+3. The trainer installs the logging and warmup behavior described above.
+
+Llama 8B uses the same stage-based integration. This is a reference for the
+existing activation path, not an example of MLPerf running through ordinary
+`pretrain`.
+
+#### Using the renamed package with Primus
+
+Update the consumer and package pin together:
+
+1. In Primus's Megatron adapter, replace the old trainer import with
+   `from mlperf_common import MLPerfMegatronPretrainTrainer`; update the
+   dependency error message as well. Update any other consumer imports of the
+   old namespace, including direct logger or warmup imports.
+2. Install a commit containing this rename and uninstall the old distribution,
+   as described above. A Primus revision still importing `primus_mllog` is not
+   compatible with this package version.
+3. Keep the recipe's `mlperf_pretrain` stage while using this existing dispatch
+   path. Validate the updated consumer in the target training image, including
+   warmup, MLPerf event ordering, evaluation, and convergence stopping.
+
+Keep existing submission Docker/code pins together if they still use the old
+namespace. Merely changing the install URL or setting `PRIMUS_STAGE=pretrain`
+does not preserve this MLPerf integration.
+
+#### Removing the dedicated stage: follow-up integration work
+
+The package rename does **not** implement an MLPerf enable flag or hook for
+ordinary `pretrain`. Primus needs an explicit activation path that preserves
+this trainer's logging and warmup behavior before the dedicated stage can be
+retired. Those features can remain in `mlperf_common`; moving them into Primus
+is not required by the rename. There is no normal-`pretrain` usage command to
+recommend until that consumer integration exists and is validated.
 
 ### Supervised fine-tuning (Megatron-Bridge)
 
