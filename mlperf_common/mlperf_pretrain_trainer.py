@@ -6,7 +6,7 @@
 
 """MLPerf-enabled Megatron pretrain trainer for the Primus new architecture.
 
-Unlike the legacy ``primus_mllog.MLPerfMegatronPretrainTrainer`` (which
+Unlike the legacy ``MLPerfMegatronPretrainTrainer`` (which
 subclassed the *old* Primus trainer and overrode Primus-owned ``init`` /
 ``run`` / ``train`` / ``train_step`` methods), the new architecture delegates
 the entire training loop to upstream ``megatron.training.pretrain()`` inside

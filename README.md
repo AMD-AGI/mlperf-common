@@ -1,8 +1,8 @@
-# primus-mllog
+# mlperf-common
 
 MLPerf-compliant training logging utilities for **ROCm Primus**.
 
-`primus-mllog` wraps the [MLCommons `mlperf_logging`](https://github.com/mlcommons/logging)
+`mlperf-common` wraps the [MLCommons `mlperf_logging`](https://github.com/mlcommons/logging)
 library and integrates it with [Primus](https://github.com/AMD-AGI/Primus) Megatron
 and Megatron-Bridge training workloads. It emits the `:::MLLOG` events required for an
 MLPerf Training submission (init, run, block, eval, and stop markers) with correct
@@ -45,13 +45,20 @@ keeps kernel-compilation and allocator overhead out of the timed run.
 - [Primus](https://github.com/AMD-AGI/Primus) (for `MLPerfMegatronPretrainTrainer`)
 - Megatron-LM / Megatron-Core
 - `numpy`
+
+The package installer installs `mlperf-logging` and `numpy`. Provision the
+training stack separately in the target image. Basic logger imports do not
+require that stack, but runtime rank detection uses PyTorch, and the pretraining
+trainer requires compatible Primus and Megatron installations.
+
 ## Installation
 
 Install directly from GitHub (recommended for Dockerfiles — pin to a commit for
-reproducible builds):
+reproducible builds). Replace `<commit-with-package-rename>` with a commit
+containing the Python package rename; older commits still install the old package:
 
 ```bash
-pip install git+https://github.com/AMD-AGI/mlperf-common.git@7f0de9b01a0c4153a8bc7a8edb292b3748195e32
+pip install "git+https://github.com/AMD-AGI/mlperf-common.git@<commit-with-package-rename>"
 ```
 
 In a Dockerfile:
@@ -60,44 +67,151 @@ In a Dockerfile:
 # git must be available in the image
 RUN apt-get update && apt-get install -y --no-install-recommends git
 
-RUN pip install git+https://github.com/AMD-AGI/mlperf-common.git@7f0de9b01a0c4153a8bc7a8edb292b3748195e32
+RUN pip install "git+https://github.com/AMD-AGI/mlperf-common.git@<commit-with-package-rename>"
 ```
 
-For local development:
+For local development, check out a revision containing the rename before
+installing. While the rename PR is unmerged, use its branch rather than `main`:
 
 ```bash
 git clone https://github.com/AMD-AGI/mlperf-common.git
 cd mlperf-common
-pip install -e .
+git checkout "<commit-with-package-rename>"
+python3 -m pip install -e .
 ```
 
 ---
+
+## Migrating from the old package
+
+The distribution is now `mlperf-common` and the Python namespace is
+`mlperf_common`. Update imports in trainers, launchers, and SFT scripts, then
+uninstall the previous distribution (`pip uninstall primus-mllog`) and install
+this version. There is no `primus_mllog` compatibility package. Installing the
+new distribution does not automatically uninstall the old one.
+
+Basic logger imports do not load Primus, Megatron, or PyTorch. The pretraining
+trainer and warmup helpers load their training dependencies only when requested.
+The trainer class and its logging/warmup behavior are unchanged. Primus consumers
+must update their imports and package pins; this rename does not itself change
+Primus stage dispatch or activate MLPerf logging for ordinary `pretrain`.
+
+### Verify the installation
+
+Run this with the same Python interpreter/container used for training, from
+outside the source checkout so an uninstalled local package cannot mask an
+installation problem:
+
+```bash
+python3 -m pip check
+python3 - <<'PYTHON'
+from importlib.metadata import version
+import mlperf_common
+from mlperf_common import MLPerfLogger, MLPerfSFTLogger
+
+print("mlperf-common:", version("mlperf-common"))
+print("imported from:", mlperf_common.__file__)
+MLPerfLogger()
+MLPerfSFTLogger(global_batch_size=8, micro_batch_size=1)
+PYTHON
+```
+
+Expect version `0.2.0` for this change and a module path in the intended
+environment (or your intended checkout for an editable install). This checks
+package installation and logger construction, not training or GPU execution.
+
+Inside the prepared Primus training environment, also check the optional
+trainer import:
+
+```bash
+python3 -c 'from mlperf_common import MLPerfMegatronPretrainTrainer; print(MLPerfMegatronPretrainTrainer.__module__)'
+```
+
+Expect `mlperf_common.mlperf_pretrain_trainer`. This only verifies that the
+trainer can be imported; the consumer must still select it as described below.
 
 ## Usage
 
 ### Pretraining (Primus Megatron)
 
-Swap your trainer for the MLPerf-enabled subclass. All MLPerf events are handled
-automatically:
+`MLPerfMegatronPretrainTrainer` subclasses Primus's `MegatronPretrainTrainer`.
+Primus constructs it with the normal trainer context and drives its lifecycle
+(`setup -> init -> train -> cleanup`). Its `setup()` emits the initialization
+markers; its `train()` wraps upstream Megatron's training/evaluation functions
+and restores those functions when training exits.
+
+The public import after this rename is:
 
 ```python
-from primus_mllog import MLPerfMegatronPretrainTrainer
-
-trainer = MLPerfMegatronPretrainTrainer(...)  # same args as MegatronPretrainTrainer
-trainer.init()
-trainer.run()
+from mlperf_common import MLPerfMegatronPretrainTrainer
 ```
 
-This emits `CACHE_CLEAR`, `INIT_START` / `INIT_STOP`, `RUN_START`, `EPOCH_START`,
-`BLOCK_START` / `BLOCK_STOP`, `EVAL_START` / `EVAL_STOP`, `EVAL_ACCURACY`,
-`train_loss`, and a convergence-aware `RUN_STOP`.
+This import alone does not activate MLPerf logging. Primus must select this
+trainer. It provides synthetic warmup before `RUN_START`, rank-aware logging,
+evaluation events, and convergence-aware `RUN_STOP`. Warmup is controlled by
+`SYNTH_WARMUP_STEPS`; see the configuration tables below for all settings.
+
+#### GPT-OSS reference: existing integration
+
+The following references are pinned to Primus commit
+`d8202b102de22a9f60d266c8193ef13b1ecba9c3`, **before its consumer imports are
+updated for this package rename**:
+
+- [GPT-OSS launch guide](https://github.com/AMD-AGI/Primus/blob/d8202b102de22a9f60d266c8193ef13b1ecba9c3/examples/mlperf/gpt_oss_20b/README.md)
+- [GPT-OSS MXFP4 recipe](https://github.com/AMD-AGI/Primus/blob/d8202b102de22a9f60d266c8193ef13b1ecba9c3/examples/mlperf/gpt_oss_20b/configs/MI355/gpt_oss_20B-MXFP4-deosc-mlperf-pretrain.yaml#L15)
+- [Megatron trainer selection](https://github.com/AMD-AGI/Primus/blob/d8202b102de22a9f60d266c8193ef13b1ecba9c3/primus/backends/megatron/megatron_adapter.py#L44)
+
+The existing flow is:
+
+1. The GPT-OSS recipe sets `stage: ${PRIMUS_STAGE:mlperf_pretrain}` in its
+   trainer overrides, defaulting to `mlperf_pretrain`.
+2. The Megatron adapter selects `MLPerfMegatronPretrainTrainer` for that stage.
+   At the pinned revision it imports the class from `primus_mllog`.
+3. The trainer installs the logging and warmup behavior described above.
+
+Llama 8B uses the same stage-based integration. This is a reference for the
+existing activation path, not an example of MLPerf running through ordinary
+`pretrain`.
+
+#### Using the renamed package with Primus
+
+Update the consumer and package pin together:
+
+1. In Primus's Megatron adapter, replace the old trainer import with
+   `from mlperf_common import MLPerfMegatronPretrainTrainer`; update the
+   dependency error message as well. Update any other consumer imports of the
+   old namespace, including direct logger or warmup imports.
+2. Install a commit containing this rename and uninstall the old distribution,
+   as described above. A Primus revision still importing `primus_mllog` is not
+   compatible with this package version.
+3. Keep the recipe's `mlperf_pretrain` stage while using this existing dispatch
+   path. Validate the updated consumer in the target training image, including
+   warmup, MLPerf event ordering, evaluation, and convergence stopping.
+
+Keep existing submission Docker/code pins together if they still use the old
+namespace. Merely changing the install URL or setting `PRIMUS_STAGE=pretrain`
+does not preserve this MLPerf integration.
+
+#### Removing the dedicated stage: follow-up integration work
+
+The package rename does **not** implement an MLPerf enable flag or hook for
+ordinary `pretrain`. Primus needs an explicit activation path that preserves
+this trainer's logging and warmup behavior before the dedicated stage can be
+retired. Those features can remain in `mlperf_common`; moving them into Primus
+is not required by the rename. There is no normal-`pretrain` usage command to
+recommend until that consumer integration exists and is validated.
 
 ### Supervised fine-tuning (Megatron-Bridge)
 
-Use the standalone logger and call its lifecycle hooks from your custom training loop:
+Use the standalone logger and call its lifecycle hooks from your custom training
+loop. The following is an integration template, not a standalone executable:
+your application supplies the model/data initialization, `training_loop`, step
+metrics, evaluation scheduling, and `run_eval()`. It must run in the prepared
+training environment. Ensure the parent directory of `MLLOG_OUTPUT_FILE` exists
+and is writable, or set `MLLOG_SAVE_TO_FILE=0` for stdout-only logging.
 
 ```python
-from primus_mllog import MLPerfSFTLogger
+from mlperf_common import MLPerfSFTLogger
 
 logger = MLPerfSFTLogger(global_batch_size=8, micro_batch_size=1)
 
@@ -123,6 +237,16 @@ logger.log_run_stop(consumed_samples)
 ```
 
 ---
+
+## Troubleshooting the migration
+
+| Symptom | What to check |
+| --- | --- |
+| `No module named mlperf_common` | The installed revision may predate the rename, or installation used a different interpreter. Check the version and module path with the verification commands above. |
+| `No module named primus_mllog` after upgrading | A consumer still imports the old namespace. Update its imports and package pin together, or retain the previous matching consumer/package versions. |
+| Importing the trainer fails on `primus`, `megatron`, or another training dependency | Run inside the prepared training image and verify compatible runtime dependencies. Installing this package alone does not install the training stack. |
+| Training runs with no MLPerf events or synthetic warmup | Check that Primus selects `MLPerfMegatronPretrainTrainer`; importing the package or using ordinary `pretrain` does not activate it. Check `SYNTH_WARMUP_STEPS` if logging works but warmup is disabled. |
+| Opening the log file fails | Create a writable parent directory for `MLLOG_OUTPUT_FILE`, or set `MLLOG_SAVE_TO_FILE=0`. |
 
 ## Configuration
 
@@ -191,7 +315,7 @@ alias for `MLLOG_LOWEST_NUMERICAL_PRECISION_IN_LINEAR`.
 | Module | Contents |
 | --- | --- |
 | `mlperf_logger.py` | `MLPerfLogger` (rank-aware `mllog` wrapper, config extraction) and `ThroughputTimer`. |
-| `mlperf_pre_training.py` | `MLPerfMegatronPretrainTrainer` — Primus pretrain trainer with MLPerf logging. |
+| `mlperf_pretrain_trainer.py` | `MLPerfMegatronPretrainTrainer` — Primus pretrain trainer with MLPerf logging. |
 | `mlperf_sft.py` | `MLPerfSFTLogger` — standalone lifecycle-hook logger for SFT / fine-tuning. |
 | `warmup.py` | Synthetic-data warmup, FP8/FP4 state reset, and optimizer/scheduler save-restore. |
 

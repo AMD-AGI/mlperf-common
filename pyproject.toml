@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "primus-mllog"
-version = "0.1.0"
+name = "mlperf-common"
+version = "0.2.0"
 description = "MLPerf-compliant training logging utilities for ROCm Primus"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -20,4 +20,4 @@ Homepage = "https://github.com/AMD-AGI/mlperf-common"
 Repository = "https://github.com/AMD-AGI/mlperf-common"
 
 [tool.setuptools]
-packages = ["primus_mllog"]
+packages = ["mlperf_common"]
