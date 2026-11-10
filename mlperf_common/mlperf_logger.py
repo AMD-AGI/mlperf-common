@@ -62,7 +62,7 @@ class MLPerfLogger:
         # MLPerf Training 6.1 requires all three precision disclosures. Keep
         # the pre-6.1 linear environment variable as a compatibility alias so
         # existing benchmark configs emit the corrected key after upgrading
-        # primus-mllog.
+        # mlperf-common.
         lowest_precision_linear = os.getenv(
             "MLLOG_LOWEST_NUMERICAL_PRECISION_IN_LINEAR",
             os.getenv("MLLOG_LOWEST_NUMERICAL_PRECISION_LINEAR", ""),

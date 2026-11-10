@@ -1,6 +1,6 @@
 # Contributing to mlperf-common
 
-Thanks for your interest in contributing to **mlperf-common** (`primus-mllog`)!
+Thanks for your interest in contributing to **mlperf-common**!
 This project provides MLPerf-compliant training logging utilities for ROCm Primus.
 Contributions of all kinds are welcome — bug reports, documentation, and code.
 
@@ -71,7 +71,7 @@ Use a real name and email.
 
 ## Coding Guidelines
 - Target Python and follow the style and structure already present in
-  [`primus_mllog/`](./primus_mllog).
+  [`mlperf_common/`](./mlperf_common).
 - Prefer clear, self-documenting code; add comments only where intent is non-obvious.
 - Keep rank-awareness and MLPerf-logging semantics intact — spurious events or
   wrong-rank emissions can invalidate an MLPerf submission.

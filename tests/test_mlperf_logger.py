@@ -1,16 +1,9 @@
-import importlib.util
 import os
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-
-_MODULE_PATH = Path(__file__).parents[1] / "primus_mllog" / "mlperf_logger.py"
-_SPEC = importlib.util.spec_from_file_location("mlperf_logger_under_test", _MODULE_PATH)
-_MODULE = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_MODULE)
-MLPerfLogger = _MODULE.MLPerfLogger
+from mlperf_common import MLPerfLogger
 
 
 def _megatron_args():

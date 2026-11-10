@@ -1,8 +1,8 @@
-# primus-mllog
+# mlperf-common
 
 MLPerf-compliant training logging utilities for **ROCm Primus**.
 
-`primus-mllog` wraps the [MLCommons `mlperf_logging`](https://github.com/mlcommons/logging)
+`mlperf-common` wraps the [MLCommons `mlperf_logging`](https://github.com/mlcommons/logging)
 library and integrates it with [Primus](https://github.com/AMD-AGI/Primus) Megatron
 and Megatron-Bridge training workloads. It emits the `:::MLLOG` events required for an
 MLPerf Training submission (init, run, block, eval, and stop markers) with correct
@@ -48,10 +48,11 @@ keeps kernel-compilation and allocator overhead out of the timed run.
 ## Installation
 
 Install directly from GitHub (recommended for Dockerfiles — pin to a commit for
-reproducible builds):
+reproducible builds). Replace `<commit-with-package-rename>` with a commit
+containing the Python package rename; older commits still install the old package:
 
 ```bash
-pip install git+https://github.com/AMD-AGI/mlperf-common.git@7f0de9b01a0c4153a8bc7a8edb292b3748195e32
+pip install "git+https://github.com/AMD-AGI/mlperf-common.git@<commit-with-package-rename>"
 ```
 
 In a Dockerfile:
@@ -60,7 +61,7 @@ In a Dockerfile:
 # git must be available in the image
 RUN apt-get update && apt-get install -y --no-install-recommends git
 
-RUN pip install git+https://github.com/AMD-AGI/mlperf-common.git@7f0de9b01a0c4153a8bc7a8edb292b3748195e32
+RUN pip install "git+https://github.com/AMD-AGI/mlperf-common.git@<commit-with-package-rename>"
 ```
 
 For local development:
@@ -73,6 +74,20 @@ pip install -e .
 
 ---
 
+## Migrating from the old package
+
+The distribution is now `mlperf-common` and the Python namespace is
+`mlperf_common`. Update imports in trainers, launchers, and SFT scripts, then
+uninstall the previous distribution (`pip uninstall primus-mllog`) and install
+this version. There is no `primus_mllog` compatibility package. Installing the
+new distribution does not automatically uninstall the old one.
+
+Basic logger imports do not load Primus, Megatron, or PyTorch. The pretraining
+trainer and warmup helpers load their training dependencies only when requested.
+The trainer class and its logging/warmup behavior are unchanged. Primus consumers
+must update their imports and package pins; this rename does not itself change
+Primus stage dispatch or activate MLPerf logging for ordinary `pretrain`.
+
 ## Usage
 
 ### Pretraining (Primus Megatron)
@@ -81,7 +96,7 @@ Swap your trainer for the MLPerf-enabled subclass. All MLPerf events are handled
 automatically:
 
 ```python
-from primus_mllog import MLPerfMegatronPretrainTrainer
+from mlperf_common import MLPerfMegatronPretrainTrainer
 
 trainer = MLPerfMegatronPretrainTrainer(...)  # same args as MegatronPretrainTrainer
 trainer.init()
@@ -97,7 +112,7 @@ This emits `CACHE_CLEAR`, `INIT_START` / `INIT_STOP`, `RUN_START`, `EPOCH_START`
 Use the standalone logger and call its lifecycle hooks from your custom training loop:
 
 ```python
-from primus_mllog import MLPerfSFTLogger
+from mlperf_common import MLPerfSFTLogger
 
 logger = MLPerfSFTLogger(global_batch_size=8, micro_batch_size=1)
 
@@ -191,7 +206,7 @@ alias for `MLLOG_LOWEST_NUMERICAL_PRECISION_IN_LINEAR`.
 | Module | Contents |
 | --- | --- |
 | `mlperf_logger.py` | `MLPerfLogger` (rank-aware `mllog` wrapper, config extraction) and `ThroughputTimer`. |
-| `mlperf_pre_training.py` | `MLPerfMegatronPretrainTrainer` — Primus pretrain trainer with MLPerf logging. |
+| `mlperf_pretrain_trainer.py` | `MLPerfMegatronPretrainTrainer` — Primus pretrain trainer with MLPerf logging. |
 | `mlperf_sft.py` | `MLPerfSFTLogger` — standalone lifecycle-hook logger for SFT / fine-tuning. |
 | `warmup.py` | Synthetic-data warmup, FP8/FP4 state reset, and optimizer/scheduler save-restore. |
 

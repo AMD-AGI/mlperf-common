@@ -1,6 +1,6 @@
 # Security Policy
 
-The **mlperf-common** (`primus-mllog`) maintainers and AMD take the security of
+The **mlperf-common** maintainers and AMD take the security of
 this project seriously. Thank you for helping keep it and its users safe.
 
 ## Reporting a Vulnerability
